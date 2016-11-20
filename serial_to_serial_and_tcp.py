@@ -24,10 +24,10 @@ TCP_RECV_BUFFER_SIZE = 1024
 The TCP server is a asynchronous TCP server which will read/write from the TX and RX queue's
 """
 class TcpServer(asyncore.dispatcher):
-    def __init__(self, address, port, RxQueue, TxQueue,):
+    def __init__(self, address, port, ConnectionHandlerClass, RxQueue, TxQueue,):
+        self.ConnectHdlrClass       = ConnectionHandlerClass
         self.RxQueue                = RxQueue
         self.TxQueue                = TxQueue
-        self.buffer                 = ""
         asyncore.dispatcher.__init__(self)
         self.create_socket(socket.AF_INET, socket.SOCK_STREAM)
         self.bind((address, int(port)))
@@ -37,10 +37,28 @@ class TcpServer(asyncore.dispatcher):
     def handle_accept(self):
         socket, address = self.accept()
         print 'Connection by', address
+        self.ConnectHdlrClass(socket, address, self, self.RxQueue, self.TxQueue)
+    def handle_error(self):
+        print "socket encountered an error"
+    def handle_expt(self):
+        print "socket received OOB data (not really used in practice)"
+    def handle_close(self):
+        print "close socket"
+        self.close()
+
+class ConnectionHandler(asyncore.dispatcher):
+    def __init__(self, conn_sock, client_address, server, RxQueue, TxQueue):
+        self.server             = server
+        self.client_address     = client_address
+        self.buffer             = ""
+        self.RxQueue            = RxQueue
+        self.TxQueue            = TxQueue
         asyncore.dispatcher.__init__(self, conn_sock)
         print "created handler; waiting for loop"
+    def readable(self):
+        return True
     def handle_read(self):
-        data = self.recv(TCP_RECV_BUFFER_SIZE)
+        data = self.recv(1024)
         print "TcpRx:\t" + data
         if (len(data) > 0):
             self.RxQueue.put(data)
@@ -58,13 +76,8 @@ class TcpServer(asyncore.dispatcher):
                 sent = self.send(self.buffer)
                 self.buffer = self.buffer[sent:]
             else :
-                time.sleep(0.01)
-    def handle_error(self):
-        print "socket encountered an error"
-    def handle_expt(self):
-        print "socket received OOB data (not really used in practice)"
+                time.sleep(0.1)
     def handle_close(self):
-        print "close socket"
         self.close()
 
 def SerialToQueue(serialObj, queue):
@@ -113,6 +126,8 @@ def OutputSerialInit(portName):
     print "Clone COM slave name is: " + portName
     command = command + "&" #run process in background
     os.system(command)
+    command = "sudo chmod 666 " + portName
+    os.system(command)
     time.sleep(1)
     #The slave port is used for a other application the master side we use to read an write data to
     #So after this point we will not do anything with the slave side
@@ -157,7 +172,7 @@ if __name__ == "__main__":
     CloneTCPObjRxQueue = Queue()    
     CloneTCPObjTxQueue = Queue()
 
-    TcpServerObj = TcpServer("", tcpPort, CloneTCPObjRxQueue, CloneTCPObjTxQueue)
+    TcpServerObj = TcpServer("", tcpPort, ConnectionHandler, CloneTCPObjRxQueue, CloneTCPObjTxQueue)
     thread5 = Process(target=TcpServerObj.run_forever, args=()) #function is bocking
     thread5.start()
 
